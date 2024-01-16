@@ -1,13 +1,55 @@
+use std::{net, path::PathBuf, process};
+
+use argh::FromArgs;
 use axum::Router;
+use axum_server::tls_rustls::RustlsConfig;
 use tower_http::services;
+
+#[derive(FromArgs)]
+/// ssl requirements
+struct Args {
+    /// certificate for https
+    #[argh(option, short = 'c')]
+    cert: PathBuf,
+
+    #[argh(option, short = 'k')]
+    /// private key for cert
+    key: PathBuf,
+
+    #[argh(option, short = 'p')]
+    /// port
+    port: u16,
+}
 
 #[tokio::main]
 async fn main() {
+    // read commandline arguments
+    let args: Args = argh::from_env();
+
+    // ensure that the cert and key exists
+    if !args.cert.exists() {
+        eprintln!("cert file does not exist: '{}'", args.cert.display());
+        process::exit(1);
+    }
+    if !args.key.exists() {
+        eprintln!("key file does not exist: '{}'", args.key.display());
+        process::exit(1);
+    }
+
+    // configure certificate and private key for https
+    let config = RustlsConfig::from_pem_file(args.cert, args.key)
+        .await
+        .unwrap();
+
+    // setup app to serve static files
     let serve_dir = services::ServeDir::new("assets")
         .not_found_service(services::ServeFile::new("assets/index.html"));
     let app = Router::new().fallback_service(serve_dir);
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
-    println!("listen on {}", listener.local_addr().unwrap());
-    axum::serve(listener, app).await.unwrap();
+    let address = net::SocketAddr::from(([0, 0, 0, 0], args.port));
+    println!("listen on {}", address);
+    axum_server::bind_rustls(address, config)
+        .serve(app.into_make_service())
+        .await
+        .unwrap();
 }

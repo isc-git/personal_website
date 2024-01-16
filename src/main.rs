@@ -19,6 +19,10 @@ struct Args {
     #[argh(option, short = 'p')]
     /// port
     port: u16,
+
+    #[argh(option, short = 'd')]
+    /// seconds between rustls config reload
+    reload: u64,
 }
 
 #[tokio::main]
@@ -37,9 +41,16 @@ async fn main() {
     }
 
     // configure certificate and private key for https
-    let config = RustlsConfig::from_pem_file(args.cert, args.key)
+    let config = RustlsConfig::from_pem_file(&args.cert, &args.key)
         .await
         .unwrap();
+
+    tokio::spawn(reload_config(
+        config.clone(),
+        args.reload,
+        args.cert.clone(),
+        args.key.clone(),
+    ));
 
     // setup app to serve static files
     let serve_dir = services::ServeDir::new("assets")
@@ -52,4 +63,16 @@ async fn main() {
         .serve(app.into_make_service())
         .await
         .unwrap();
+}
+
+async fn reload_config<P: AsRef<std::path::Path>>(
+    config: RustlsConfig,
+    seconds: u64,
+    cert: P,
+    key: P,
+) {
+    loop {
+        tokio::time::sleep(std::time::Duration::from_secs(seconds)).await;
+        config.reload_from_pem_file(&cert, &key).await.unwrap();
+    }
 }

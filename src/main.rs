@@ -4,6 +4,7 @@ use argh::FromArgs;
 use axum::Router;
 use axum_server::tls_rustls::RustlsConfig;
 use tower_http::services;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(FromArgs)]
 /// ssl requirements
@@ -27,6 +28,18 @@ struct Args {
 
 #[tokio::main]
 async fn main() {
+    // enable logging
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                ["website=debug", "tower_http=debug", "axum::rejection=trace"]
+                    .join(",")
+                    .into()
+            }),
+        )
+        .with(tracing_subscriber::fmt::layer())
+        .init();
+
     // read commandline arguments
     let args: Args = argh::from_env();
 
@@ -55,7 +68,9 @@ async fn main() {
     // setup app to serve static files
     let serve_dir = services::ServeDir::new("assets")
         .not_found_service(services::ServeFile::new("assets/index.html"));
-    let app = Router::new().fallback_service(serve_dir);
+    let app = Router::new()
+        .fallback_service(serve_dir)
+        .layer(tower_http::trace::TraceLayer::new_for_http());
 
     let address = net::SocketAddr::from(([0, 0, 0, 0], args.port));
     println!("listen on {}", address);
